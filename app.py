@@ -16,6 +16,13 @@ import io
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
+
 # Cargar .env si existe (para desarrollo local)
 try:
     from dotenv import load_dotenv
@@ -30,6 +37,16 @@ except ImportError:
 AGENT_NAME = "Venom"
 MODEL = "llama-3.3-70b-versatile"  # Groq: llama-3.3-70b-versatile | llama-3.1-8b-instant | mixtral-8x7b-32768
 DATA_DIR = Path("data/entrevistas")
+SHEET_ID = "1pkEpG_Mz5EZa_qiDz8ZqF8rLXbd4ersE8uqSOiDzmzc"
+
+# Columnas del Google Sheet (mismo orden que los headers)
+SHEET_COLUMNS = [
+    "timestamp", "nombre", "daw_principal", "experiencia_años", "nicho",
+    "herramientas_adicionales", "dolor_principal", "dolores_secundarios",
+    "funciones_amadas", "funciones_odiadas", "momento_creatividad_cortada",
+    "cosas_fuera_del_daw", "flujo_trabajo_resumen", "suenos_daw_ideal",
+    "opinion_ia", "beta_tester", "insights_clave", "nivel_tecnico"
+]
 
 
 # ═════════════════════════════════════════════
@@ -147,6 +164,64 @@ El JSON va envuelto en ```json ```. Usa EXACTAMENTE este formato:
 # ═════════════════════════════════════════════
 # ALMACENAMIENTO
 # ═════════════════════════════════════════════
+def get_sheets_client():
+    """Crea cliente gspread usando credenciales de Streamlit Secrets o archivo local."""
+    if not GSPREAD_AVAILABLE:
+        return None
+    
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    try:
+        # Primero intenta Streamlit Secrets (para Streamlit Cloud)
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except (KeyError, FileNotFoundError):
+        pass
+    
+    # Fallback: archivo local service_account.json
+    sa_path = Path("service_account.json")
+    if sa_path.exists():
+        creds = Credentials.from_service_account_file(str(sa_path), scopes=scopes)
+        return gspread.authorize(creds)
+    
+    return None
+
+
+def save_to_sheets(profile_data):
+    """Guarda el perfil del músico como nueva fila en Google Sheets."""
+    gc = get_sheets_client()
+    if not gc:
+        return False
+    
+    try:
+        sheet = gc.open_by_key(SHEET_ID).sheet1
+        
+        # Construir fila en el orden correcto de columnas
+        row = []
+        for col in SHEET_COLUMNS:
+            if col == "timestamp":
+                row.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            else:
+                value = profile_data.get(col, "")
+                # Listas y dicts se convierten a string legible
+                if isinstance(value, (list, dict)):
+                    row.append(json.dumps(value, ensure_ascii=False))
+                elif isinstance(value, bool):
+                    row.append("Sí" if value else "No")
+                else:
+                    row.append(str(value) if value is not None else "")
+        
+        sheet.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        st.warning(f"⚠️ No se pudo guardar en Google Sheets: {e}")
+        return False
+
+
 def save_interview(profile_data, messages):
     """Guarda la entrevista completa (perfil + conversación) en un archivo JSON."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -441,9 +516,13 @@ def main():
         # Si se detectó perfil → guardar entrevista
         if profile:
             save_interview(profile, st.session_state.messages)
+            sheets_ok = save_to_sheets(profile)
             st.session_state.interview_complete = True
             st.session_state.profile_data = profile
-            st.toast("💾 Entrevista guardada exitosamente", icon="✅")
+            if sheets_ok:
+                st.toast("💾 Entrevista guardada en Google Sheets", icon="✅")
+            else:
+                st.toast("💾 Entrevista guardada localmente", icon="✅")
             st.rerun()
     
     # ── Debug info (solo en modo demo) ──
