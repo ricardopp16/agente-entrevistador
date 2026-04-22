@@ -356,56 +356,66 @@ def main():
     if "profile_data" not in st.session_state:
         st.session_state.profile_data = None
     
+    # ── Detectar si hay key preconfigurada (producción) ──
+    has_preconfigured_key = False
+    try:
+        if st.secrets.get("GROQ_API_KEY"):
+            has_preconfigured_key = True
+    except (KeyError, FileNotFoundError):
+        pass
+    if not has_preconfigured_key and os.getenv("GROQ_API_KEY"):
+        has_preconfigured_key = True
+    
     # ── Sidebar ──
+    demo_mode = False
+    reveal_project = False
+    
     with st.sidebar:
         st.title(f"🎵 {AGENT_NAME}")
         st.caption("Entrevistador de Músicos")
         
-        st.divider()
-        
-        # Input de API Key (para desarrollo local)
-        api_key = st.text_input(
-            "🔑 API Key (Groq)",
-            type="password",
-            value=os.getenv("GROQ_API_KEY", ""),
-            help="Tu API key de console.groq.com"
-        )
-        if api_key:
-            st.session_state.api_key_input = api_key
-        
-        st.divider()
-        
-        # Modo demo
-        demo_mode = st.toggle("🔧 Modo Demo", value=False)
-        
-        reveal_project = False
-        if demo_mode:
-            reveal_project = st.toggle(
-                "📢 Revelar proyecto DAW",
-                value=False,
-                help="ON = menciona que están creando un DAW. OFF = investigación genérica."
+        if not has_preconfigured_key:
+            # Solo mostrar controles de dev cuando NO hay key preconfigurada
+            st.divider()
+            
+            api_key = st.text_input(
+                "🔑 API Key (Groq)",
+                type="password",
+                value="",
+                help="Tu API key de console.groq.com"
             )
+            if api_key:
+                st.session_state.api_key_input = api_key
+            
+            st.divider()
+            
+            demo_mode = st.toggle("🔧 Modo Demo", value=False)
+            
+            if demo_mode:
+                reveal_project = st.toggle(
+                    "📢 Revelar proyecto DAW",
+                    value=False,
+                    help="ON = menciona que están creando un DAW. OFF = investigación genérica."
+                )
+            
+            st.divider()
+            
+            n_profiles = len(get_all_profiles())
+            st.metric("📊 Entrevistas guardadas", n_profiles)
+            
+            csv_data = profiles_to_csv()
+            if csv_data:
+                st.download_button(
+                    "📥 Exportar CSV",
+                    csv_data,
+                    file_name=f"entrevistas_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
         
         st.divider()
         
-        # Estadísticas
-        n_profiles = len(get_all_profiles())
-        st.metric("📊 Entrevistas guardadas", n_profiles)
-        
-        # Exportar CSV
-        csv_data = profiles_to_csv()
-        if csv_data:
-            st.download_button(
-                "📥 Exportar CSV",
-                csv_data,
-                file_name=f"entrevistas_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
-        st.divider()
-        
-        # Botón nueva entrevista
+        # Botón nueva entrevista (siempre visible)
         if st.button("🔄 Nueva entrevista", use_container_width=True):
             st.session_state.messages = []
             st.session_state.interview_complete = False
