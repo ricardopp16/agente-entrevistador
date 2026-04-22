@@ -35,7 +35,8 @@ except ImportError:
 # CONFIGURACIÓN
 # ═════════════════════════════════════════════
 AGENT_NAME = "Venom"
-MODEL = "llama-3.3-70b-versatile"  # Groq: llama-3.3-70b-versatile | llama-3.1-8b-instant | mixtral-8x7b-32768
+MODEL = "llama-3.1-8b-instant"  # Groq: llama-3.1-8b-instant (500k/día) | llama-3.3-70b-versatile (100k/día)
+MAX_CONTEXT_MESSAGES = 12  # Máximo de mensajes (sin system) a enviar a la API
 DATA_DIR = Path("data/entrevistas")
 SHEET_ID = "1pkEpG_Mz5EZa_qiDz8ZqF8rLXbd4ersE8uqSOiDzmzc"
 
@@ -501,9 +502,15 @@ def main():
         with st.chat_message("assistant", avatar="🎵"):
             with st.spinner(""):
                 try:
+                    # Ventana deslizante: system + últimos N mensajes
+                    msgs = st.session_state.messages
+                    system_msgs = [m for m in msgs if m["role"] == "system"]
+                    non_system = [m for m in msgs if m["role"] != "system"]
+                    context = system_msgs + non_system[-MAX_CONTEXT_MESSAGES:]
+                    
                     response = client.chat.completions.create(
                         model=MODEL,
-                        messages=st.session_state.messages,
+                        messages=context,
                         temperature=0.7,
                         max_tokens=800
                     )
