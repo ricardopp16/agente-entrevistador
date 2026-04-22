@@ -1,0 +1,7 @@
+# Ignorar archivos sensibles y datos
+.env
+data/
+__pycache__/
+*.pyc
+.DS_Store
+venv/
