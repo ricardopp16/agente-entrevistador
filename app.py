@@ -13,6 +13,7 @@ import os
 import csv
 import re
 import io
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -223,6 +224,47 @@ def save_to_sheets(profile_data):
         return False
 
 
+def save_message_to_sheets(session_id, role, content):
+    """Guarda un mensaje individual en la hoja 'conversaciones' de Google Sheets.
+    Esto permite recuperar entrevistas aunque el músico cierre el navegador."""
+    gc = get_sheets_client()
+    if not gc:
+        return False
+    
+    try:
+        spreadsheet = gc.open_by_key(SHEET_ID)
+        
+        # Obtener o crear la hoja 'conversaciones'
+        try:
+            conv_sheet = spreadsheet.worksheet("conversaciones")
+        except gspread.exceptions.WorksheetNotFound:
+            conv_sheet = spreadsheet.add_worksheet(
+                title="conversaciones", rows=1000, cols=4
+            )
+            conv_sheet.append_row(
+                ["session_id", "timestamp", "role", "content"],
+                value_input_option="USER_ENTERED"
+            )
+        
+        # Truncar contenido para no exceder límites de celdas (50k chars)
+        content_clean = clean_display_text(content)
+        if len(content_clean) > 10000:
+            content_clean = content_clean[:10000] + "... [truncado]"
+        
+        conv_sheet.append_row(
+            [
+                session_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                role,
+                content_clean
+            ],
+            value_input_option="USER_ENTERED"
+        )
+        return True
+    except Exception:
+        return False
+
+
 def save_interview(profile_data, messages):
     """Guarda la entrevista completa (perfil + conversación) en un archivo JSON."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -366,6 +408,8 @@ def main():
         st.session_state.interview_complete = False
     if "profile_data" not in st.session_state:
         st.session_state.profile_data = None
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())[:8]
     
     # ── Detectar si hay key preconfigurada (producción) ──
     has_preconfigured_key = False
@@ -431,6 +475,7 @@ def main():
             st.session_state.messages = []
             st.session_state.interview_complete = False
             st.session_state.profile_data = None
+            st.session_state.session_id = str(uuid.uuid4())[:8]
             st.rerun()
     
     # ── Verificar API Key ──
@@ -473,6 +518,9 @@ def main():
                 st.session_state.messages.append(
                     {"role": "assistant", "content": intro}
                 )
+                save_message_to_sheets(
+                    st.session_state.session_id, "assistant", intro
+                )
             except Exception as e:
                 st.error(f"Error conectando con la API: {e}")
                 st.session_state.messages = []
@@ -502,8 +550,9 @@ def main():
     
     # ── Chat input del usuario ──
     if prompt := st.chat_input("Escribe tu respuesta..."):
-        # Agregar mensaje del usuario
+        # Agregar mensaje del usuario y guardar en Sheets
         st.session_state.messages.append({"role": "user", "content": prompt})
+        save_message_to_sheets(st.session_state.session_id, "user", prompt)
         
         with st.chat_message("user", avatar="🎤"):
             st.markdown(prompt)
@@ -537,8 +586,9 @@ def main():
             # Detectar si la entrevista terminó (perfil JSON generado)
             profile = extract_profile_json(reply)
         
-        # Guardar mensaje
+        # Guardar mensaje y persistir en Sheets
         st.session_state.messages.append({"role": "assistant", "content": reply})
+        save_message_to_sheets(st.session_state.session_id, "assistant", reply)
         
         # Si se detectó perfil → guardar entrevista
         if profile:
