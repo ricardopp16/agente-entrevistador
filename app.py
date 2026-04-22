@@ -35,7 +35,7 @@ except ImportError:
 # CONFIGURACIÓN
 # ═════════════════════════════════════════════
 AGENT_NAME = "Venom"
-MODEL = "llama-3.1-8b-instant"  # Groq: llama-3.1-8b-instant (500k/día) | llama-3.3-70b-versatile (100k/día)
+MODEL = "meta-llama/llama-3.3-70b-instruct"  # OpenRouter: Llama 3.3 70B ($0.10/M in, $0.32/M out)
 MAX_CONTEXT_MESSAGES = 12  # Máximo de mensajes (sin system) a enviar a la API
 DATA_DIR = Path("data/entrevistas")
 SHEET_ID = "1pkEpG_Mz5EZa_qiDz8ZqF8rLXbd4ersE8uqSOiDzmzc"
@@ -317,25 +317,35 @@ def profiles_to_csv():
 # CLIENTE API
 # ═════════════════════════════════════════════
 def get_client():
-    """Crea el cliente OpenAI apuntando a Groq.
-    Busca la API key en este orden: sidebar input → Streamlit Secrets → variable de entorno.
+    """Crea el cliente OpenAI apuntando a OpenRouter (producción) o Groq (local fallback).
+    Busca la API key en este orden: OpenRouter secrets/env → Groq secrets/env → sidebar input.
     """
-    api_key = st.session_state.get("api_key_input", "")
+    from openai import OpenAI
     
+    # 1. OpenRouter (producción)
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENROUTER_API_KEY")
+    except (KeyError, FileNotFoundError):
+        pass
+    if not api_key:
+        api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if api_key:
+        return OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    
+    # 2. Groq (fallback local)
+    api_key = st.session_state.get("api_key_input", "")
     if not api_key:
         try:
             api_key = st.secrets["GROQ_API_KEY"]
         except (KeyError, FileNotFoundError):
             pass
-    
     if not api_key:
         api_key = os.getenv("GROQ_API_KEY", "")
+    if api_key:
+        return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
     
-    if not api_key:
-        return None
-    
-    from openai import OpenAI
-    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+    return None
 
 
 # ═════════════════════════════════════════════
@@ -360,11 +370,11 @@ def main():
     # ── Detectar si hay key preconfigurada (producción) ──
     has_preconfigured_key = False
     try:
-        if st.secrets.get("GROQ_API_KEY"):
+        if st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("GROQ_API_KEY"):
             has_preconfigured_key = True
     except (KeyError, FileNotFoundError):
         pass
-    if not has_preconfigured_key and os.getenv("GROQ_API_KEY"):
+    if not has_preconfigured_key and (os.getenv("OPENROUTER_API_KEY") or os.getenv("GROQ_API_KEY")):
         has_preconfigured_key = True
     
     # ── Sidebar ──
